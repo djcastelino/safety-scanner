@@ -1,74 +1,95 @@
 import { useState, useRef, useEffect } from 'react'
-import Quagga from '@ericblade/quagga2'
 import { Camera, X, Search, Loader2 } from 'lucide-react'
 
 export default function Scanner({ onScan, loading }) {
   const [isScanning, setIsScanning] = useState(false)
   const [manualInput, setManualInput] = useState('')
   const [error, setError] = useState(null)
-  const scannerRef = useRef(null)
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const barcodeDetectorRef = useRef(null)
+  const animationFrameRef = useRef(null)
 
   const startScanning = async () => {
     setError(null)
+    setIsScanning(true)
+    
     try {
-      await Quagga.init({
-        inputStream: {
-          type: "LiveStream",
-          target: scannerRef.current,
-          constraints: {
-            facingMode: "environment",
-            width: { min: 640, ideal: 1280, max: 1920 },
-            height: { min: 480, ideal: 720, max: 1080 }
-          }
-        },
-        decoder: {
-          readers: [
-            "ean_reader",
-            "ean_8_reader",
-            "code_128_reader",
-            "code_39_reader",
-            "upc_reader",
-            "upc_e_reader"
-          ]
-        },
-        locate: true,
-        locator: {
-          patchSize: "medium",
-          halfSample: true
+      console.log("Requesting camera access...")
+      
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { 
+          facingMode: "environment",
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         }
-      }, (err) => {
-        if (err) {
-          console.error("Quagga init error:", err)
-          setError("Camera access denied or not available")
-          alert("Could not access camera. Please check permissions and try again, or enter barcode manually.")
-          return
-        }
-        
-        Quagga.start()
-        setIsScanning(true)
       })
+      
+      streamRef.current = stream
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.play()
+      }
 
-      Quagga.onDetected((result) => {
-        if (result && result.codeResult && result.codeResult.code) {
-          const code = result.codeResult.code
-          console.log("Barcode detected:", code)
-          stopScanning()
-          onScan(code)
-        }
-      })
+      // Try using native Barcode Detection API if available
+      if ('BarcodeDetector' in window) {
+        console.log("Using native BarcodeDetector API")
+        barcodeDetectorRef.current = new window.BarcodeDetector({
+          formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39']
+        })
+        detectBarcode()
+      } else {
+        console.log("BarcodeDetector not supported - manual scanning only")
+        setError("Camera opened - native barcode detection not supported on this browser. Please use manual input.")
+      }
 
     } catch (err) {
       console.error("Camera error:", err)
-      setError("Camera initialization failed")
-      alert("Could not access camera. Please enter barcode manually.")
+      setError("Camera access denied")
+      setIsScanning(false)
+      alert("Could not access camera: " + err.message + "\n\nPlease allow camera permissions or use manual input.")
     }
   }
 
-  const stopScanning = () => {
-    if (isScanning) {
-      Quagga.stop()
-      setIsScanning(false)
+  const detectBarcode = async () => {
+    if (!barcodeDetectorRef.current || !videoRef.current || !isScanning) {
+      return
     }
+
+    try {
+      const barcodes = await barcodeDetectorRef.current.detect(videoRef.current)
+      
+      if (barcodes.length > 0) {
+        const code = barcodes[0].rawValue
+        console.log("Barcode detected:", code)
+        stopScanning()
+        onScan(code)
+        return
+      }
+    } catch (err) {
+      console.error("Detection error:", err)
+    }
+
+    // Continue scanning
+    animationFrameRef.current = requestAnimationFrame(detectBarcode)
+  }
+
+  const stopScanning = () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+    }
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+    
+    setIsScanning(false)
   }
 
   const handleManualSubmit = (e) => {
@@ -108,11 +129,24 @@ export default function Scanner({ onScan, loading }) {
 
         {isScanning && (
           <div className="space-y-4">
-            <div ref={scannerRef} className="rounded-lg overflow-hidden bg-black relative" style={{ minHeight: '300px' }}>
-              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-white text-sm">
+            <div className="rounded-lg overflow-hidden bg-black relative">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-auto"
+                style={{ maxHeight: '400px' }}
+              />
+              <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 text-white text-sm px-4 py-2 rounded-full">
                 Point camera at barcode
               </div>
             </div>
+            {error && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                {error}
+              </div>
+            )}
             <button
               onClick={stopScanning}
               className="w-full bg-red-500 hover:bg-red-600 text-white font-medium py-3 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors"
