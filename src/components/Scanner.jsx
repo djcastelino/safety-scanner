@@ -1,43 +1,74 @@
 import { useState, useRef, useEffect } from 'react'
-import { Html5Qrcode } from 'html5-qrcode'
+import Quagga from '@ericblade/quagga2'
 import { Camera, X, Search, Loader2 } from 'lucide-react'
 
 export default function Scanner({ onScan, loading }) {
   const [isScanning, setIsScanning] = useState(false)
   const [manualInput, setManualInput] = useState('')
+  const [error, setError] = useState(null)
   const scannerRef = useRef(null)
-  const html5QrCodeRef = useRef(null)
 
   const startScanning = async () => {
+    setError(null)
     try {
-      const html5QrCode = new Html5Qrcode("qr-reader")
-      html5QrCodeRef.current = html5QrCode
-
-      await html5QrCode.start(
-        { facingMode: "environment" },
-        {
-          fps: 10,
-          qrbox: { width: 250, height: 250 }
+      await Quagga.init({
+        inputStream: {
+          type: "LiveStream",
+          target: scannerRef.current,
+          constraints: {
+            facingMode: "environment",
+            width: { min: 640, ideal: 1280, max: 1920 },
+            height: { min: 480, ideal: 720, max: 1080 }
+          }
         },
-        (decodedText) => {
-          stopScanning()
-          onScan(decodedText)
+        decoder: {
+          readers: [
+            "ean_reader",
+            "ean_8_reader",
+            "code_128_reader",
+            "code_39_reader",
+            "upc_reader",
+            "upc_e_reader"
+          ]
+        },
+        locate: true,
+        locator: {
+          patchSize: "medium",
+          halfSample: true
         }
-      )
-      
-      setIsScanning(true)
+      }, (err) => {
+        if (err) {
+          console.error("Quagga init error:", err)
+          setError("Camera access denied or not available")
+          alert("Could not access camera. Please check permissions and try again, or enter barcode manually.")
+          return
+        }
+        
+        Quagga.start()
+        setIsScanning(true)
+      })
+
+      Quagga.onDetected((result) => {
+        if (result && result.codeResult && result.codeResult.code) {
+          const code = result.codeResult.code
+          console.log("Barcode detected:", code)
+          stopScanning()
+          onScan(code)
+        }
+      })
+
     } catch (err) {
       console.error("Camera error:", err)
+      setError("Camera initialization failed")
       alert("Could not access camera. Please enter barcode manually.")
     }
   }
 
   const stopScanning = () => {
-    if (html5QrCodeRef.current) {
-      html5QrCodeRef.current.stop().catch(err => console.error(err))
-      html5QrCodeRef.current = null
+    if (isScanning) {
+      Quagga.stop()
+      setIsScanning(false)
     }
-    setIsScanning(false)
   }
 
   const handleManualSubmit = (e) => {
@@ -50,11 +81,11 @@ export default function Scanner({ onScan, loading }) {
 
   useEffect(() => {
     return () => {
-      if (html5QrCodeRef.current) {
-        html5QrCodeRef.current.stop().catch(err => console.error(err))
+      if (isScanning) {
+        Quagga.stop()
       }
     }
-  }, [])
+  }, [isScanning])
 
   return (
     <div className="space-y-6">
@@ -77,7 +108,11 @@ export default function Scanner({ onScan, loading }) {
 
         {isScanning && (
           <div className="space-y-4">
-            <div id="qr-reader" ref={scannerRef} className="rounded-lg overflow-hidden"></div>
+            <div ref={scannerRef} className="rounded-lg overflow-hidden bg-black relative" style={{ minHeight: '300px' }}>
+              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-white text-sm">
+                Point camera at barcode
+              </div>
+            </div>
             <button
               onClick={stopScanning}
               className="w-full bg-red-500 hover:bg-red-600 text-white font-medium py-3 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors"
