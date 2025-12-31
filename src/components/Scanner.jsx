@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { Camera, X, Search, Loader2 } from 'lucide-react'
+import { Camera, X, Search, Loader2, Upload } from 'lucide-react'
+import jsQR from 'jsqr'
 
 export default function Scanner({ onScan, loading }) {
   const [isScanning, setIsScanning] = useState(false)
@@ -9,6 +10,7 @@ export default function Scanner({ onScan, loading }) {
   const streamRef = useRef(null)
   const barcodeDetectorRef = useRef(null)
   const animationFrameRef = useRef(null)
+  const fileInputRef = useRef(null)
 
   const startScanning = async () => {
     setError(null)
@@ -100,10 +102,39 @@ export default function Scanner({ onScan, loading }) {
     }
   }
 
+  const handleImageUpload = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        const code = jsQR(imageData.data, imageData.width, imageData.height)
+        
+        if (code) {
+          console.log("Barcode found in image:", code.data)
+          onScan(code.data)
+        } else {
+          alert("No barcode detected in image. Please try:\n- Better lighting\n- Clearer photo\n- Or manually type the barcode")
+        }
+      }
+      img.src = event.target?.result
+    }
+    reader.readAsDataURL(file)
+  }
+
   useEffect(() => {
     return () => {
       if (isScanning) {
-        Quagga.stop()
+        stopScanning()
       }
     }
   }, [isScanning])
@@ -118,13 +149,32 @@ export default function Scanner({ onScan, loading }) {
         
         {/* Camera Scanner */}
         {!isScanning && !loading && (
-          <button
-            onClick={startScanning}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors"
-          >
-            <Camera className="w-6 h-6" />
-            Open Camera Scanner
-          </button>
+          <div className="space-y-3">
+            <button
+              onClick={startScanning}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors"
+            >
+              <Camera className="w-6 h-6" />
+              Open Camera Scanner
+            </button>
+            
+            <div className="text-center text-gray-500 text-sm">or</div>
+            
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors"
+            >
+              <Upload className="w-6 h-6" />
+              Upload Barcode Image
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              className="hidden"
+            />
+          </div>
         )}
 
         {isScanning && (
